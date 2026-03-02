@@ -1,18 +1,24 @@
 import pool from '../config/db.js';
 
-export const getHistory = async (req, res, next) => {
+export const getSearchHistory = async (req, res, next) => {
   try {
-    const { rows } = await pool.query('SELECT * FROM search_history ORDER BY created_at DESC');
+    const { rows } = await pool.query(
+      'SELECT * FROM search_history WHERE user_id = $1 ORDER BY created_at DESC',
+      [req.user.id]
+    );
     res.json({ success: true, history: rows });
-  } catch (error) {
-    next(error);
+  } catch (err) {
+    next(err);
   }
 };
 
-export const deleteHistory = async (req, res, next) => {
+export const deleteHistoryItem = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { rowCount } = await pool.query('DELETE FROM search_history WHERE id = $1', [id]);
+    const { rowCount } = await pool.query(
+      'DELETE FROM search_history WHERE id = $1 AND user_id = $2',
+      [id, req.user.id]
+    );
     
     if (rowCount === 0) {
       return res.status(404).json({ success: false, error: 'History item not found' });

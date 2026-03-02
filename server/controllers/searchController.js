@@ -46,31 +46,61 @@ For the "time_filter" field:
 The dork must always include site:linkedin.com/in/
 Use combinations of exact quotes, OR limits, and exclusions (-).`;
 
+    const modelName = "gemini-1.5-flash";
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.5-flash", 
-      systemInstruction: systemPrompt 
+      model: modelName, 
+      systemInstruction: systemPrompt,
+      generationConfig: { responseMimeType: 'application/json' }
     });
 
-    const aiResponse = await model.generateContent(`Generate LinkedIn dorks for this query: ${query}`);
+    let aiResponse;
+    try {
+      aiResponse = await model.generateContent(`Generate LinkedIn dorks for this query: ${query}`);
+    } catch (aiErr) {
+      console.error(`[AI Error] ${modelName} failed:`, aiErr);
+      
+      // Catch blocked or invalid API keys
+      const errText = aiErr.message || '';
+      if (errText.includes('API key not valid') || errText.includes('reported as leaked') || errText.includes('PERMISSION_DENIED')) {
+        return res.status(403).json({ 
+          success: false, 
+          error: 'Gemini AI access denied. Your API key may be invalid or deactivated (leaked). Please update your .env file with a fresh key from Google AI Studio.' 
+        });
+      }
+
+      // Fallback attempt with gemini-pro
+      console.log(`[AI] Attempting fallback to gemini-pro...`);
+      try {
+        const fallbackModel = genAI.getGenerativeModel({ 
+          model: "gemini-pro", 
+          systemInstruction: systemPrompt
+        });
+        aiResponse = await fallbackModel.generateContent(`Generate LinkedIn dorks for this query: ${query}`);
+      } catch (fallbackErr) {
+        return res.status(500).json({ 
+          success: false, 
+          error: `AI Service Error: ${fallbackErr.message || 'Failed to generate dorks'}` 
+        });
+      }
+    }
+
     const aiText = aiResponse.response.text();
     
-    const jsonMatch = aiText.match(/\{[\s\S]*\}/);
     let parsedData;
-    
     try {
-      parsedData = JSON.parse(jsonMatch ? jsonMatch[0] : aiText);
+      parsedData = JSON.parse(aiText);
     } catch (e) {
       console.error('Failed to parse Gemini JSON:', aiText);
-      return res.status(500).json({ success: false, error: 'Failed to generate dorks' });
+      return res.status(500).json({ success: false, error: 'Failed to generate dorks: invalid AI response format' });
     }
     
     // Inject the raw query into the variants so frontend can pass it later
-    const variants = parsedData.variants.map(v => ({...v, original_query: query}));
+    const variants = (parsedData.variants || []).map(v => ({...v, original_query: query}));
 
     // Save history (we still record the query and raw dorks)
     const { rows } = await pool.query(
-      `INSERT INTO search_history (raw_query, generated_dorks) VALUES ($1, $2) RETURNING id`,
-      [query, JSON.stringify(variants)]
+      `INSERT INTO search_history (user_id, raw_query, generated_dorks) VALUES ($1, $2, $3) RETURNING id`,
+      [req.user.id, query, JSON.stringify(variants)]
     );
     const savedHistoryId = rows[0].id;
     
@@ -81,10 +111,7 @@ Use combinations of exact quotes, OR limits, and exclusions (-).`;
     });
 
   } catch (error) {
-    console.error('Gemini API Error:', error);
-    if (error.status === 401 || error.message?.includes('API key')) {
-       return res.status(500).json({ success: false, error: 'API configuration error' });
-    }
+    console.error('Gemini API General Error:', error);
     next(error);
   }
 };
@@ -213,26 +240,61 @@ Here is the data:
 ${fullSnippetPayload}
 `;
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash', temperature: 0.1 });
+    const modelName = 'gemini-1.5-flash';
+    const modelOptions = { 
+      model: modelName, 
+      generationConfig: { 
+        temperature: 0.1,
+        responseMimeType: 'application/json'
+      }
+    };
 
-    const aiResponse = await model.generateContent(extractionPrompt);
+    let aiResponse;
+    try {
+      const model = genAI.getGenerativeModel(modelOptions);
+      aiResponse = await model.generateContent(extractionPrompt);
+    } catch (aiErr) {
+      console.error(`[AI Extraction Error] ${modelName} failed:`, aiErr);
+
+      const errText = aiErr.message || '';
+      if (errText.includes('API key not valid') || errText.includes('reported as leaked') || errText.includes('PERMISSION_DENIED')) {
+        return res.status(403).json({ 
+          success: false, 
+          error: 'Gemini AI access denied. Your API key may be invalid or deactivated (leaked). Please update your .env file with a fresh key.' 
+        });
+      }
+
+      console.log(`[AI Extraction] Attempting fallback to gemini-pro...`);
+      try {
+        const fallbackModel = genAI.getGenerativeModel({ model: "gemini-pro" });
+        aiResponse = await fallbackModel.generateContent(extractionPrompt);
+      } catch (fallbackErr) {
+        console.error(`[AI Extraction] Fallback failed:`, fallbackErr);
+        const fallbackLeads = linkedinResults.map(r => ({ title: r.title, link: r.link, snippet: r.snippet }));
+        return res.json({ 
+          success: true, 
+          count: fallbackLeads.length, 
+          leads: fallbackLeads, 
+          warning: `AI extraction failed (${fallbackErr.message || 'Error'}). Returning raw results.` 
+        });
+      }
+    }
+
     const aiText = aiResponse.response.text();
 
-    const jsonMatch = aiText.match(/\[[\s\S]*\]/);
     let extractedData = [];
-
     try {
-      extractedData = JSON.parse(jsonMatch ? jsonMatch[0] : aiText);
+      extractedData = JSON.parse(aiText);
     } catch (e) {
       console.error('Failed to parse Gemini Extraction JSON:', aiText);
       const fallbackLeads = linkedinResults.map(r => ({ title: r.title, link: r.link, snippet: r.snippet }));
-      return res.json({ success: true, count: fallbackLeads.length, leads: fallbackLeads, warning: 'AI extraction failed, returning raw results.' });
+      return res.json({ success: true, count: fallbackLeads.length, leads: fallbackLeads, warning: 'AI extraction format invalid, returning raw results.' });
     }
 
     res.json({ success: true, count: extractedData.length, leads: extractedData });
 
   } catch (error) {
-    console.error('SerpAPI/Gemini Extraction Error:', error);
+    console.error('SerpAPI/Gemini Extraction General Error:', error);
     next(error);
   }
 };

@@ -1,9 +1,9 @@
 import express from 'express';
-import { getHistory, deleteHistory } from '../controllers/historyController.js';
+import { getSearchHistory, deleteHistoryItem } from '../controllers/historyController.js';
 
 const router = express.Router();
 
-router.get('/', getHistory);
-router.delete('/:id', deleteHistory);
+router.get('/', getSearchHistory);
+router.delete('/:id', deleteHistoryItem);
 
 export default router;

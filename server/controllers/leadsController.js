@@ -3,20 +3,22 @@ import pool from '../config/db.js';
 export const getAllLeads = async (req, res, next) => {
   try {
     const { tag, limit = 50, offset = 0 } = req.query;
+    const userId = req.user.id;
     
     let query = `
       SELECT l.*, COALESCE(json_agg(t.name) FILTER (WHERE t.name IS NOT NULL), '[]') as tags
       FROM leads l
       LEFT JOIN lead_tags lt ON l.id = lt.lead_id
       LEFT JOIN tags t ON lt.tag_id = t.id
+      WHERE l.user_id = $1
     `;
-    const queryParams = [];
+    const queryParams = [userId];
     
     if (tag) {
-      query += ` WHERE EXISTS (
+      query += ` AND EXISTS (
         SELECT 1 FROM lead_tags lt2 
         JOIN tags t2 ON lt2.tag_id = t2.id 
-        WHERE lt2.lead_id = l.id AND t2.name = $1
+        WHERE lt2.lead_id = l.id AND t2.name = $2 AND t2.user_id = $1
       )`;
       queryParams.push(tag);
     }
@@ -27,10 +29,10 @@ export const getAllLeads = async (req, res, next) => {
     const { rows } = await pool.query(query, queryParams);
     
     // Get total count
-    let countQuery = 'SELECT COUNT(DISTINCT l.id) as total FROM leads l';
-    const countParams = [];
+    let countQuery = 'SELECT COUNT(DISTINCT l.id) as total FROM leads l WHERE l.user_id = $1';
+    const countParams = [userId];
     if (tag) {
-      countQuery += ` JOIN lead_tags lt ON l.id = lt.lead_id JOIN tags t ON lt.tag_id = t.id WHERE t.name = $1`;
+      countQuery += ` AND EXISTS (SELECT 1 FROM lead_tags lt JOIN tags t ON lt.tag_id = t.id WHERE lt.lead_id = l.id AND t.name = $2 AND t.user_id = $1)`;
       countParams.push(tag);
     }
     const { rows: countRows } = await pool.query(countQuery, countParams);
@@ -49,27 +51,27 @@ export const createLead = async (req, res, next) => {
   const client = await pool.connect();
   try {
     const { name, linkedin_url, title, company, location, notes, tags = [] } = req.body;
+    const userId = req.user.id;
     
     await client.query('BEGIN');
     
     // Insert Lead
     const leadQuery = `
-      INSERT INTO leads (name, linkedin_url, title, company, location, notes)
-      VALUES ($1, $2, $3, $4, $5, $6)
+      INSERT INTO leads (user_id, name, linkedin_url, title, company, location, notes)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING *
     `;
-    const { rows } = await client.query(leadQuery, [name, linkedin_url, title, company, location, notes]);
+    const { rows } = await client.query(leadQuery, [userId, name, linkedin_url, title, company, location, notes]);
     const lead = rows[0];
 
     // Handle Tags
     if (tags && tags.length > 0) {
       for (const tagName of tags) {
-        // Find or create tag
         const tagRes = await client.query(`
-          INSERT INTO tags (name) VALUES ($1)
-          ON CONFLICT (name) DO UPDATE SET name=EXCLUDED.name
+          INSERT INTO tags (user_id, name) VALUES ($1, $2)
+          ON CONFLICT (user_id, name) DO UPDATE SET name=EXCLUDED.name
           RETURNING id
-        `, [tagName]);
+        `, [userId, tagName]);
         
         const tagId = tagRes.rows[0].id;
         
@@ -101,11 +103,12 @@ export const updateLead = async (req, res, next) => {
   try {
     const { id } = req.params;
     const { notes, tags } = req.body;
+    const userId = req.user.id;
     
     await client.query('BEGIN');
     
     if (notes !== undefined) {
-      await client.query('UPDATE leads SET notes = $1, updated_at = NOW() WHERE id = $2', [notes, id]);
+      await client.query('UPDATE leads SET notes = $1, updated_at = NOW() WHERE id = $2 AND user_id = $3', [notes, id, userId]);
     }
     
     if (tags && Array.isArray(tags)) {
@@ -115,10 +118,10 @@ export const updateLead = async (req, res, next) => {
       // Insert new tags
       for (const tagName of tags) {
         const tagRes = await client.query(`
-          INSERT INTO tags (name) VALUES ($1)
-          ON CONFLICT (name) DO UPDATE SET name=EXCLUDED.name
+          INSERT INTO tags (user_id, name) VALUES ($1, $2)
+          ON CONFLICT (user_id, name) DO UPDATE SET name=EXCLUDED.name
           RETURNING id
-        `, [tagName]);
+        `, [userId, tagName]);
         
         const tagId = tagRes.rows[0].id;
         await client.query('INSERT INTO lead_tags (lead_id, tag_id) VALUES ($1, $2)', [id, tagId]);
@@ -131,9 +134,9 @@ export const updateLead = async (req, res, next) => {
       FROM leads l
       LEFT JOIN lead_tags lt ON l.id = lt.lead_id
       LEFT JOIN tags t ON lt.tag_id = t.id
-      WHERE l.id = $1
+      WHERE l.id = $1 AND l.user_id = $2
       GROUP BY l.id
-    `, [id]);
+    `, [id, userId]);
     
     if (rows.length === 0) {
       await client.query('ROLLBACK');
@@ -153,7 +156,8 @@ export const updateLead = async (req, res, next) => {
 export const deleteLead = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { rowCount } = await pool.query('DELETE FROM leads WHERE id = $1', [id]);
+    const userId = req.user.id;
+    const { rowCount } = await pool.query('DELETE FROM leads WHERE id = $1 AND user_id = $2', [id, userId]);
     
     if (rowCount === 0) {
       return res.status(404).json({ success: false, error: 'Lead not found' });

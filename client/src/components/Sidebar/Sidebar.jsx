@@ -1,32 +1,17 @@
-import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Search, Users, Clock, Settings, Binoculars, UserCircle } from 'lucide-react';
-import { usersApi } from '../../services/api';
+import { Home, Users, History, Settings, LogOut, Binoculars, UserCircle } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
 import './Sidebar.css';
 
 const Sidebar = () => {
   const location = useLocation();
-  const [profile, setProfile] = useState({ name: 'Loading...', role: '...' });
+  const { user, logout } = useAuth();
 
-  useEffect(() => {
-    const fetchProfile = async () => {
-      try {
-        const data = await usersApi.getProfile();
-        if (data.success) {
-          setProfile(data.user);
-        }
-      } catch (err) {
-        console.error("Sidebar profile fetch error", err);
-      }
-    };
-    fetchProfile();
-  }, []);
-
-  const navItems = [
-    { path: '/', label: 'Search', icon: Search },
-    { path: '/leads', label: 'Saved Leads', icon: Users },
-    { path: '/history', label: 'History', icon: Clock },
-    { path: '/settings', label: 'Settings', icon: Settings }
+  const menuItems = [
+    { path: '/', label: 'Dashboard', icon: Home },
+    { path: '/leads', label: 'My Leads', icon: Users },
+    { path: '/history', label: 'History', icon: History },
+    { path: '/settings', label: 'Settings', icon: Settings },
   ];
 
   return (
@@ -39,37 +24,38 @@ const Sidebar = () => {
       </div>
       
       <nav className="sidebar-nav">
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          const isActive = location.pathname === item.path;
-          
-          return (
-            <Link 
-              key={item.path} 
-              to={item.path} 
-              className={`nav-item ${isActive ? 'active' : ''}`}
-            >
-              <Icon size={20} className="nav-icon" />
-              <span className="nav-label">{item.label}</span>
-            </Link>
-          );
-        })}
+        {menuItems.map((item) => (
+          <Link
+            key={item.path}
+            to={item.path}
+            className={`nav-item ${location.pathname === item.path ? 'active' : ''}`}
+          >
+            <item.icon size={20} className="nav-icon" />
+            <span className="nav-label">{item.label}</span>
+          </Link>
+        ))}
       </nav>
-      
+
       <div className="sidebar-footer">
-        <div className="user-profile">
-          <div className="avatar">
-            {profile.avatar_url ? (
-              <img src={profile.avatar_url} alt="A" style={{width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%'}} />
-            ) : (
-               <UserCircle size={24} />
-            )}
+        {user && (
+          <div className="user-profile">
+            <div className="avatar">
+              {user.avatar_url ? (
+                <img src={user.avatar_url} alt={user.name} />
+              ) : (
+                <div className="avatar-placeholder">{user.name?.[0] || 'U'}</div>
+              )}
+            </div>
+            <div className="user-info">
+              <span className="user-name">{user.name}</span>
+              <span className="user-role">{user.role || 'User'}</span>
+            </div>
           </div>
-          <div className="user-info">
-            <span className="user-name">{profile.name}</span>
-            <span className="user-role">{profile.role || 'Guest'}</span>
-          </div>
-        </div>
+        )}
+        <button className="logout-button" onClick={logout}>
+          <LogOut size={20} className="nav-icon" />
+          <span className="nav-label">Logout</span>
+        </button>
       </div>
     </aside>
   );
