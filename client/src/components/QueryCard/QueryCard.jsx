@@ -4,7 +4,7 @@ import { searchApi } from '../../services/api';
 import { generateCsv } from '../../utils/exportCSV';
 import './QueryCard.css';
 
-const QueryCard = ({ label, dork }) => {
+const QueryCard = ({ label, dork, original_query, time_filter }) => {
   const [copied, setCopied] = useState(false);
   const [isScraping, setIsScraping] = useState(false);
   const [error, setError] = useState(null);
@@ -21,7 +21,11 @@ const QueryCard = ({ label, dork }) => {
       setError(null);
       // Passing both the specific dork to execute AND the user's original natural language 
       // query so the server knows what custom fields to ask the AI to extract.
-      const payload = await searchApi.scrapeDork({ dork, original_query: label });
+      const payload = await searchApi.scrapeDork({ 
+        dork, 
+        original_query: original_query || label,
+        time_filter: time_filter || null,
+      });
       
       if (payload.success && payload.leads.length > 0) {
         generateCsv(payload.leads, `leaddork_${label.replace(/\\s+/g, '_').toLowerCase()}.csv`);

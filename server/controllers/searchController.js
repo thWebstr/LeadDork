@@ -29,10 +29,19 @@ Format:
     {
       "label": "Short description of the dork's angle (e.g., 'Founders by title')",
       "dork": "site:linkedin.com/in/ \\"founder\\" \\"fintech\\" -intitle:\\"jobs\\"",
-      "original_query": "YOUR_ORIGINAL_QUERY_HERE"
+      "original_query": "YOUR_ORIGINAL_QUERY_HERE",
+      "time_filter": null
     }
   ]
 }
+
+For the "time_filter" field:
+- If the user mentions activity recency (e.g. "recently active", "last 30 days", "active this month", "last week", "last 24 hours"), set time_filter to the appropriate Google Search freshness code:
+  - "qdr:d"  → last 24 hours
+  - "qdr:w"  → last 7 days
+  - "qdr:m"  → last month (~31 days)
+  - "qdr:y"  → last year
+- If no activity window is mentioned, set time_filter to null.
 
 The dork must always include site:linkedin.com/in/
 Use combinations of exact quotes, OR limits, and exclusions (-).`;
@@ -81,87 +90,130 @@ Use combinations of exact quotes, OR limits, and exclusions (-).`;
 };
 
 /**
- * Phase 3 addition: Scrapes Google blindly in the background using SerpApi
+ * Per-person contact enrichment pipeline:
+ *  Phase 1 → Run main LinkedIn dork, extract names from result titles
+ *  Phase 2 → Fire one targeted contact dork per person in parallel
+ *  Phase 3 → Build person-grouped snippets → Gemini extraction
  */
 export const executeDorkScrape = async (req, res, next) => {
   try {
-    const { dork, original_query } = req.body;
+    const { dork, original_query, time_filter } = req.body;
 
     if (!dork) {
       return res.status(400).json({ success: false, error: 'Dork query is required for scraping' });
     }
-
     if (!SERP_API_KEY) {
       return res.status(500).json({ success: false, error: 'SerpApi Key is not configured on the server' });
     }
 
     const search = new GoogleSearch(SERP_API_KEY);
 
-    // Helper: run a single SerpApi search as a promise
-    const runSearch = (query, num = 20) =>
+    // Helper: wraps SerpApi callback in a Promise; always resolves (never rejects)
+    // time_filter maps to Google's tbs param (e.g. qdr:m = last month)
+    const runSearch = (query, num = 10, tbs = null) =>
       new Promise((resolve) => {
-        search.json({ engine: 'google', q: query, num }, (result) => {
-          // Resolve even on error so Promise.all never rejects — we'll just get 0 results
+        const params = { engine: 'google', q: query, num };
+        if (tbs) params.tbs = tbs;
+        search.json(params, (result) => {
           resolve(result.error ? [] : (result.organic_results || []));
         });
       });
 
-    // 1. Build a contact-enrichment dork targeting emails, WhatsApp, and personal sites
-    //    outside LinkedIn so Gemini has real data to populate those fields.
-    const contactDork = `"${original_query || 'professional'}" email OR "whatsapp" OR "wa.me" OR "@gmail.com" OR "@yahoo.com" OR "contact me" -site:linkedin.com`;
+    // Phase 1: Main LinkedIn dork — apply time_filter as tbs if provided
+    const linkedinResults = await runSearch(dork, 20, time_filter || null);
 
-    // 2. Fire both searches in parallel to keep latency low
-    const [linkedinResults, contactResults] = await Promise.all([
-      runSearch(dork, 20),
-      runSearch(contactDork, 10),
-    ]);
-
-    const allResults = [...linkedinResults, ...contactResults];
-
-    if (allResults.length === 0) {
+    if (linkedinResults.length === 0) {
       return res.json({ success: true, count: 0, leads: [] });
     }
 
-    // 3. Combine snippets from both searches — label the source so Gemini knows context
-    const linkedinSnippets = linkedinResults
-      .map(r => `[LinkedIn Result]\nSource: ${r.link}\nTitle: ${r.title}\nSnippet: ${r.snippet}\n---`)
-      .join('\n');
+    // Extract name from LinkedIn title — typical format: "John Doe - Title at Company | LinkedIn"
+    // or "John Doe | LinkedIn"
+    const extractName = (title = '') => {
+      const match = title.match(/^([^|\-–]+)/);
+      return match ? match[1].trim() : null;
+    };
 
-    const contactSnippets = contactResults
-      .map(r => `[Contact Enrichment Result]\nSource: ${r.link}\nTitle: ${r.title}\nSnippet: ${r.snippet}\n---`)
-      .join('\n');
+    // Pair each result with its extracted name
+    const profilesWithNames = linkedinResults.map(r => ({
+      result: r,
+      name: extractName(r.title),
+    }));
 
-    const snippets = [linkedinSnippets, contactSnippets].filter(Boolean).join('\n\n');
+    // ─── PHASE 2: Per-person contact dorks (capped at 10 profiles) ────────────
+    // For each person, search their name + contact signals across ALL platforms
+    const CAP = 10;
+    const profilesToEnrich = profilesWithNames.slice(0, CAP);
 
-    // 4. AI Extraction Prompt — Gemini now has both LinkedIn profiles AND contact pages
-    const extractionPrompt = `You are an expert data scraper. I will provide you with two sets of Google Search snippets:
-- [LinkedIn Result] snippets: contain profile information (name, title, company, LinkedIn URL)
-- [Contact Enrichment Result] snippets: contain contact details (emails, WhatsApp numbers, websites) for similar people
+    const contactSearchPromises = profilesToEnrich.map(({ name }) => {
+      if (!name) return Promise.resolve([]);
+      // Broad contact dork: name + any contact signal, excluding LinkedIn noise
+      const contactDork = `"${name}" (email OR "whatsapp" OR "wa.me" OR "contact" OR "@gmail" OR "@yahoo" OR "@outlook" OR phone) -site:linkedin.com`;
+      return runSearch(contactDork, 5);
+    });
 
-Your job is to cross-reference these two sets and extract a structured JSON array of leads.
+    const contactResultsPerPerson = await Promise.all(contactSearchPromises);
+
+    // ─── PHASE 3: Build per-person snippet blocks → single Gemini call ────────
+    const personBlocks = profilesToEnrich.map(({ result, name }, i) => {
+      const contactResults = contactResultsPerPerson[i] || [];
+
+      const linkedinBlock = [
+        `=== PERSON: ${name || 'Unknown'} ===`,
+        `[LinkedIn Profile]`,
+        `Source: ${result.link}`,
+        `Title: ${result.title}`,
+        `Snippet: ${result.snippet || ''}`,
+      ].join('\n');
+
+      const contactBlock = contactResults.length
+        ? contactResults.map(c =>
+            `[Contact Search Result for ${name}]\nSource: ${c.link}\nTitle: ${c.title}\nSnippet: ${c.snippet || ''}`
+          ).join('\n')
+        : `[No contact results found for ${name}]`;
+
+      return `${linkedinBlock}\n${contactBlock}\n---`;
+    });
+
+    // Also append any LinkedIn results beyond the cap as LinkedIn-only entries
+    const uncappedBlocks = profilesWithNames.slice(CAP).map(({ result, name }) =>
+      [
+        `=== PERSON: ${name || 'Unknown'} ===`,
+        `[LinkedIn Profile]`,
+        `Source: ${result.link}`,
+        `Title: ${result.title}`,
+        `Snippet: ${result.snippet || ''}`,
+        `---`,
+      ].join('\n')
+    );
+
+    const fullSnippetPayload = [...personBlocks, ...uncappedBlocks].join('\n\n');
+
+    // ─── GEMINI EXTRACTION ────────────────────────────────────────────────────
+    const extractionPrompt = `You are an expert lead data extractor. I will give you a set of Google search results grouped by person.
+Each group starts with "=== PERSON: Name ===" and contains:
+- A [LinkedIn Profile] snippet (name, title, company, LinkedIn URL)
+- Zero or more [Contact Search Result for Name] snippets (may contain email, WhatsApp/phone, personal websites found across the web)
+
+Your job: extract one JSON object per person. Return a JSON array.
 
 RULES:
-1. ONLY return valid JSON. Do not include markdown formatting like \`\`\`json.
-2. The JSON MUST be an array of objects.
-3. Every object MUST ALWAYS include these mandatory keys, in this exact order first:
-   - "name": Full name of the person (from LinkedIn results)
-   - "email": Their email address(es). Scan ALL snippets thoroughly. If ONE email is found, return a string. If MORE THAN ONE, return a JSON array.
-   - "phone_whatsapp": Their WhatsApp number ONLY. Look for wa.me/ links, numbers labelled "WhatsApp", or WhatsApp Business references in ANY snippet. Set to null if none found.
-   - "linkedin_url": Their LinkedIn profile URL (from linkedin.com/in/ source links)
-   - "website": Their personal website or portfolio URL(s). If ONE, return a string. If MORE THAN ONE, return a JSON array.
-4. After those mandatory fields, ADD any extra custom keys based on the user's intent ("${original_query || ''}").
-   For example: if they asked for github repos, add "github_repo"; if they asked for company, add "company"; etc.
-5. If a mandatory or custom field cannot be found in ANY snippet, set its value to null. Do NOT omit the key.
-6. Base the number of output objects on the number of distinct LinkedIn profiles found. Do not create phantom leads from the contact snippets alone.
+1. ONLY return valid JSON. No markdown formatting like \`\`\`json.
+2. Every object MUST include these mandatory keys IN THIS ORDER:
+   - "name": Full name from the person header
+   - "email": Email address(es) found in ANY of their snippets. String if one, JSON array if multiple. null if none.
+   - "phone_whatsapp": WhatsApp number ONLY — from wa.me/ links, numbers labelled "WhatsApp", or WhatsApp Business. null if only a generic phone number or nothing found.
+   - "linkedin_url": Their LinkedIn profile URL (from linkedin.com/in/ source)
+   - "website": Personal website/portfolio URL(s). String if one, JSON array if multiple. null if none.
+3. After mandatory fields, ADD extra custom keys for: "${original_query || ''}".
+   E.g. if user asked for github repos add "github_repo", for company add "company", etc.
+4. If a field is not found anywhere in the person's snippets, set it to null. Never omit a key.
+5. One object per "=== PERSON ===" block only. Do not invent extra leads.
 
-Here is the raw scraped data:
-${snippets}
+Here is the data:
+${fullSnippetPayload}
 `;
 
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
-      temperature: 0.1
-    });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash', temperature: 0.1 });
 
     const aiResponse = await model.generateContent(extractionPrompt);
     const aiText = aiResponse.response.text();
@@ -177,16 +229,15 @@ ${snippets}
       return res.json({ success: true, count: fallbackLeads.length, leads: fallbackLeads, warning: 'AI extraction failed, returning raw results.' });
     }
 
-    res.json({
-      success: true,
-      count: extractedData.length,
-      leads: extractedData
-    });
+    res.json({ success: true, count: extractedData.length, leads: extractedData });
+
   } catch (error) {
     console.error('SerpAPI/Gemini Extraction Error:', error);
     next(error);
   }
 };
+
+
 
 
 
