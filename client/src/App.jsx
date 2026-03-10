@@ -43,6 +43,7 @@ function App() {
                       <Route path="/leads" element={<Leads />} />
                       <Route path="/history" element={<History />} />
                       <Route path="/settings" element={<Settings />} />
+                      <Route path="*" element={<Navigate to="/" replace />} />
                     </Routes>
                   </main>
                 </div>
