@@ -61,15 +61,24 @@ Use combinations of exact quotes, OR limits, and exclusions (-).`;
       
       // Catch blocked or invalid API keys
       const errText = aiErr.message || '';
-      if (errText.includes('API key not valid') || errText.includes('reported as leaked') || errText.includes('PERMISSION_DENIED')) {
+      const isLeaked = errText.includes('reported as leaked');
+      const isInvalid = errText.includes('API key not valid') || errText.includes('PERMISSION_DENIED');
+      const isQuotaExceeded = errText.includes('429') || errText.includes('quota');
+
+      if (isLeaked || isInvalid) {
         return res.status(403).json({ 
           success: false, 
-          error: 'Gemini AI access denied. Your API key may be invalid or deactivated (leaked). Please update your .env file with a fresh key from Google AI Studio.' 
+          error: isLeaked 
+            ? 'Gemini AI access denied. Your API key was flagged as LEAKED by Google security. Please generate a NEW key and update your .env file.' 
+            : 'Gemini AI access denied. Your API key may be invalid or deactivated. Please check your .env file.'
         });
       }
 
-      // Fallback attempt with gemini-pro
-      console.log(`[AI] Attempting fallback to gemini-pro...`);
+      if (isQuotaExceeded) {
+        console.warn(`[AI] Quota exceeded for ${modelName}. Attempting fallback...`);
+      }
+
+      // Fallback attempt with Gemini 3 Flash Preview (requested secondary)
       try {
         const fallbackModel = genAI.getGenerativeModel({ 
           model: "gemini-3-flash-preview", 
@@ -257,14 +266,23 @@ ${fullSnippetPayload}
       console.error(`[AI Extraction Error] ${modelName} failed:`, aiErr);
 
       const errText = aiErr.message || '';
-      if (errText.includes('API key not valid') || errText.includes('reported as leaked') || errText.includes('PERMISSION_DENIED')) {
+      const isLeaked = errText.includes('reported as leaked');
+      const isInvalid = errText.includes('API key not valid') || errText.includes('PERMISSION_DENIED');
+      const isQuotaExceeded = errText.includes('429') || errText.includes('quota');
+
+      if (isLeaked || isInvalid) {
         return res.status(403).json({ 
           success: false, 
-          error: 'Gemini AI access denied. Your API key may be invalid or deactivated (leaked). Please update your .env file with a fresh key.' 
+          error: isLeaked 
+            ? 'Gemini AI access denied. Your API key was flagged as LEAKED by Google security. Please generate a NEW key and update your .env file.' 
+            : 'Gemini AI access denied. Your API key may be invalid or deactivated. Please check your .env file.'
         });
       }
 
-      console.log(`[AI Extraction] Attempting fallback to gemini-3-flash-preview...`);
+      if (isQuotaExceeded) {
+        console.warn(`[AI Extraction] Quota exceeded for ${modelName}. Attempting fallback...`);
+      }
+
       try {
         const fallbackModel = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
         aiResponse = await fallbackModel.generateContent(extractionPrompt);
