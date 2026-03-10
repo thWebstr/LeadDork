@@ -1,6 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { Binoculars } from 'lucide-react';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import logoImg from './assets/logo.png';
 import Sidebar from './components/Sidebar/Sidebar';
 import Dashboard from './pages/Dashboard/Dashboard';
 import Leads from './pages/Leads/Leads';
@@ -32,7 +32,7 @@ function App() {
                 <div className="app-layout">
                   <header className="mobile-header">
                     <div className="mobile-logo-container">
-                      <Binoculars className="logo-icon" size={24} />
+                      <img src={logoImg} alt="LeadDork Logo" className="mobile-logo-image" />
                       <h1 className="logo-text">Lead<span>Dork</span></h1>
                     </div>
                   </header>

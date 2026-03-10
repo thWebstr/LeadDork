@@ -1,6 +1,7 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Users, History, Settings, LogOut, Binoculars, UserCircle } from 'lucide-react';
+import { Home, Users, History, Settings, LogOut, UserCircle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import logoImg from '../../assets/logo.png';
 import './Sidebar.css';
 
 const Sidebar = () => {
@@ -18,7 +19,7 @@ const Sidebar = () => {
     <aside className="sidebar">
       <div className="sidebar-header">
         <div className="logo-container">
-          <Binoculars className="logo-icon" size={24} />
+          <img src={logoImg} alt="LeadDork Logo" className="logo-image" />
           <h1 className="logo-text">Lead<span>Dork</span></h1>
         </div>
       </div>

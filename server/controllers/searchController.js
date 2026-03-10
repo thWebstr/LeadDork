@@ -46,7 +46,7 @@ For the "time_filter" field:
 The dork must always include site:linkedin.com/in/
 Use combinations of exact quotes, OR limits, and exclusions (-).`;
 
-    const modelName = "gemini-1.5-flash";
+    const modelName = "gemini-2.0-flash";
     const model = genAI.getGenerativeModel({ 
       model: modelName, 
       systemInstruction: systemPrompt,
@@ -72,7 +72,7 @@ Use combinations of exact quotes, OR limits, and exclusions (-).`;
       console.log(`[AI] Attempting fallback to gemini-pro...`);
       try {
         const fallbackModel = genAI.getGenerativeModel({ 
-          model: "gemini-pro", 
+          model: "gemini-3-flash-preview", 
           systemInstruction: systemPrompt
         });
         aiResponse = await fallbackModel.generateContent(`Generate LinkedIn dorks for this query: ${query}`);
@@ -240,7 +240,7 @@ Here is the data:
 ${fullSnippetPayload}
 `;
 
-    const modelName = 'gemini-1.5-flash';
+    const modelName = 'gemini-2.0-flash';
     const modelOptions = { 
       model: modelName, 
       generationConfig: { 
@@ -264,9 +264,9 @@ ${fullSnippetPayload}
         });
       }
 
-      console.log(`[AI Extraction] Attempting fallback to gemini-pro...`);
+      console.log(`[AI Extraction] Attempting fallback to gemini-3-flash-preview...`);
       try {
-        const fallbackModel = genAI.getGenerativeModel({ model: "gemini-pro" });
+        const fallbackModel = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
         aiResponse = await fallbackModel.generateContent(extractionPrompt);
       } catch (fallbackErr) {
         console.error(`[AI Extraction] Fallback failed:`, fallbackErr);
