@@ -46,7 +46,7 @@ For the "time_filter" field:
 The dork must always include site:linkedin.com/in/
 Use combinations of exact quotes, OR limits, and exclusions (-).`;
 
-    const modelName = "gemini-2.0-flash";
+    const modelName = "gemini-1.5-flash";
     const model = genAI.getGenerativeModel({ 
       model: modelName, 
       systemInstruction: systemPrompt,
@@ -61,27 +61,18 @@ Use combinations of exact quotes, OR limits, and exclusions (-).`;
       
       // Catch blocked or invalid API keys
       const errText = aiErr.message || '';
-      const isLeaked = errText.includes('reported as leaked');
-      const isInvalid = errText.includes('API key not valid') || errText.includes('PERMISSION_DENIED');
-      const isQuotaExceeded = errText.includes('429') || errText.includes('quota');
-
-      if (isLeaked || isInvalid) {
+      if (errText.includes('API key not valid') || errText.includes('reported as leaked') || errText.includes('PERMISSION_DENIED')) {
         return res.status(403).json({ 
           success: false, 
-          error: isLeaked 
-            ? 'Gemini AI access denied. Your API key was flagged as LEAKED by Google security. Please generate a NEW key and update your .env file.' 
-            : 'Gemini AI access denied. Your API key may be invalid or deactivated. Please check your .env file.'
+          error: 'Gemini AI access denied. Your API key may be invalid or deactivated (leaked). Please update your .env file with a fresh key from Google AI Studio.' 
         });
       }
 
-      if (isQuotaExceeded) {
-        console.warn(`[AI] Quota exceeded for ${modelName}. Attempting fallback...`);
-      }
-
-      // Fallback attempt with Gemini 3 Flash Preview (requested secondary)
+      // Fallback attempt with gemini-pro
+      console.log(`[AI] Attempting fallback to gemini-pro...`);
       try {
         const fallbackModel = genAI.getGenerativeModel({ 
-          model: "gemini-3-flash-preview", 
+          model: "gemini-pro", 
           systemInstruction: systemPrompt
         });
         aiResponse = await fallbackModel.generateContent(`Generate LinkedIn dorks for this query: ${query}`);
@@ -249,7 +240,7 @@ Here is the data:
 ${fullSnippetPayload}
 `;
 
-    const modelName = 'gemini-2.0-flash';
+    const modelName = 'gemini-1.5-flash';
     const modelOptions = { 
       model: modelName, 
       generationConfig: { 
@@ -266,25 +257,16 @@ ${fullSnippetPayload}
       console.error(`[AI Extraction Error] ${modelName} failed:`, aiErr);
 
       const errText = aiErr.message || '';
-      const isLeaked = errText.includes('reported as leaked');
-      const isInvalid = errText.includes('API key not valid') || errText.includes('PERMISSION_DENIED');
-      const isQuotaExceeded = errText.includes('429') || errText.includes('quota');
-
-      if (isLeaked || isInvalid) {
+      if (errText.includes('API key not valid') || errText.includes('reported as leaked') || errText.includes('PERMISSION_DENIED')) {
         return res.status(403).json({ 
           success: false, 
-          error: isLeaked 
-            ? 'Gemini AI access denied. Your API key was flagged as LEAKED by Google security. Please generate a NEW key and update your .env file.' 
-            : 'Gemini AI access denied. Your API key may be invalid or deactivated. Please check your .env file.'
+          error: 'Gemini AI access denied. Your API key may be invalid or deactivated (leaked). Please update your .env file with a fresh key.' 
         });
       }
 
-      if (isQuotaExceeded) {
-        console.warn(`[AI Extraction] Quota exceeded for ${modelName}. Attempting fallback...`);
-      }
-
+      console.log(`[AI Extraction] Attempting fallback to gemini-pro...`);
       try {
-        const fallbackModel = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
+        const fallbackModel = genAI.getGenerativeModel({ model: "gemini-pro" });
         aiResponse = await fallbackModel.generateContent(extractionPrompt);
       } catch (fallbackErr) {
         console.error(`[AI Extraction] Fallback failed:`, fallbackErr);
