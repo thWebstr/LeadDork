@@ -653,7 +653,3 @@ psql -U your_username -d leaddork -f server/db/schema.sql
 ## License
 
 MIT License. See `LICENSE` for details.
-
----
-
-*Built with the Anthropic Claude API. Not affiliated with LinkedIn or Google.*

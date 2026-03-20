@@ -5,7 +5,7 @@ dotenv.config();
 
 // Use DATABASE_URL if it exists (Render) otherwise fall back to local variables
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || undefined,
+  connectionString: process.env.DATABASE_URL || 'postgresql://leaddork_db_user:1I9MKnWkKbJDT2KKMtTKBQD0PJUm09FU@dpg-d6ua84ua2pns7398teog-a/leaddork_db',
   user: process.env.DB_USER || 'postgres',
   host: process.env.DB_HOST || 'localhost',
   database: process.env.DB_NAME || 'leaddork',
