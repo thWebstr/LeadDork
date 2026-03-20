@@ -3,12 +3,15 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+// Use DATABASE_URL if it exists (Render) otherwise fall back to local variables
 const pool = new Pool({
+  connectionString: process.env.DATABASE_URL || undefined,
   user: process.env.DB_USER || 'postgres',
   host: process.env.DB_HOST || 'localhost',
   database: process.env.DB_NAME || 'leaddork',
   password: process.env.DB_PASSWORD || 'leaddork_password',
   port: parseInt(process.env.DB_PORT) || 5432,
+  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false,
 });
 
 pool.on('error', (err, client) => {
