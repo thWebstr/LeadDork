@@ -20,8 +20,9 @@ const PORT = process.env.PORT || 5000;
 
 // Security Middleware (Disabled helmet for connectivity troubleshooting)
 // app.use(helmet()); 
+const corsOrigin = process.env.CLIENT_URL || (process.env.NODE_ENV === 'development' ? true : 'http://localhost:5173');
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:5173'
+  origin: corsOrigin
 }));
 app.use(express.json());
 

@@ -10,10 +10,22 @@ dotenv.config();
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const SERP_API_KEY = process.env.SERPAPI_KEY;
 
+// Helper: query the public models endpoint to find a model supporting generateContent
+async function findCompatibleModel() {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error('GEMINI_API_KEY is not set');
+  const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
+    headers: { 'x-goog-api-key': apiKey }
+  });
+  const data = await res.json();
+  const candidate = (data.models || []).find(m => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'));
+  return candidate ? candidate.name : null;
+}
+
 export const generateSearchDorks = async (req, res, next) => {
   try {
     const { query } = req.body;
-    
+
     if (!query) {
       return res.status(400).json({ success: false, error: 'Query is required' });
     }
@@ -47,8 +59,8 @@ The dork must always include site:linkedin.com/in/
 Use combinations of exact quotes, OR limits, and exclusions (-).`;
 
     const modelName = "gemini-1.5-flash";
-    const model = genAI.getGenerativeModel({ 
-      model: modelName, 
+    const model = genAI.getGenerativeModel({
+      model: modelName,
       systemInstruction: systemPrompt,
       generationConfig: { responseMimeType: 'application/json' }
     });
@@ -58,34 +70,34 @@ Use combinations of exact quotes, OR limits, and exclusions (-).`;
       aiResponse = await model.generateContent(`Generate LinkedIn dorks for this query: ${query}`);
     } catch (aiErr) {
       console.error(`[AI Error] ${modelName} failed:`, aiErr);
-      
+
       // Catch blocked or invalid API keys
       const errText = aiErr.message || '';
       if (errText.includes('API key not valid') || errText.includes('reported as leaked') || errText.includes('PERMISSION_DENIED')) {
-        return res.status(403).json({ 
-          success: false, 
-          error: 'Gemini AI access denied. Your API key may be invalid or deactivated (leaked). Please update your .env file with a fresh key from Google AI Studio.' 
+        return res.status(403).json({
+          success: false,
+          error: 'Gemini AI access denied. Your API key may be invalid or deactivated (leaked). Please update your .env file with a fresh key from Google AI Studio.'
         });
       }
 
-      // Fallback attempt with gemini-pro
-      console.log(`[AI] Attempting fallback to gemini-pro...`);
+      // Fallback: try to find a compatible model via ListModels instead of hardcoding
+      console.log(`[AI] Attempting dynamic fallback via REST ListModels...`);
       try {
-        const fallbackModel = genAI.getGenerativeModel({ 
-          model: "gemini-pro", 
-          systemInstruction: systemPrompt
-        });
+        const fallbackModelName = await findCompatibleModel();
+        if (!fallbackModelName) throw new Error('No compatible generative model found');
+        console.log(`[AI] Falling back to model: ${fallbackModelName}`);
+        const fallbackModel = genAI.getGenerativeModel({ model: fallbackModelName, systemInstruction: systemPrompt });
         aiResponse = await fallbackModel.generateContent(`Generate LinkedIn dorks for this query: ${query}`);
       } catch (fallbackErr) {
-        return res.status(500).json({ 
-          success: false, 
-          error: `AI Service Error: ${fallbackErr.message || 'Failed to generate dorks'}` 
+        return res.status(500).json({
+          success: false,
+          error: `AI Service Error: ${fallbackErr.message || 'Failed to generate dorks'}`
         });
       }
     }
 
     const aiText = aiResponse.response.text();
-    
+
     let parsedData;
     try {
       parsedData = JSON.parse(aiText);
@@ -93,9 +105,9 @@ Use combinations of exact quotes, OR limits, and exclusions (-).`;
       console.error('Failed to parse Gemini JSON:', aiText);
       return res.status(500).json({ success: false, error: 'Failed to generate dorks: invalid AI response format' });
     }
-    
+
     // Inject the raw query into the variants so frontend can pass it later
-    const variants = (parsedData.variants || []).map(v => ({...v, original_query: query}));
+    const variants = (parsedData.variants || []).map(v => ({ ...v, original_query: query }));
 
     // Save history (we still record the query and raw dorks)
     const { rows } = await pool.query(
@@ -103,7 +115,7 @@ Use combinations of exact quotes, OR limits, and exclusions (-).`;
       [req.user.id, query, JSON.stringify(variants)]
     );
     const savedHistoryId = rows[0].id;
-    
+
     res.json({
       success: true,
       variants,
@@ -194,8 +206,8 @@ export const executeDorkScrape = async (req, res, next) => {
 
       const contactBlock = contactResults.length
         ? contactResults.map(c =>
-            `[Contact Search Result for ${name}]\nSource: ${c.link}\nTitle: ${c.title}\nSnippet: ${c.snippet || ''}`
-          ).join('\n')
+          `[Contact Search Result for ${name}]\nSource: ${c.link}\nTitle: ${c.title}\nSnippet: ${c.snippet || ''}`
+        ).join('\n')
         : `[No contact results found for ${name}]`;
 
       return `${linkedinBlock}\n${contactBlock}\n---`;
@@ -241,9 +253,9 @@ ${fullSnippetPayload}
 `;
 
     const modelName = 'gemini-1.5-flash';
-    const modelOptions = { 
-      model: modelName, 
-      generationConfig: { 
+    const modelOptions = {
+      model: modelName,
+      generationConfig: {
         temperature: 0.1,
         responseMimeType: 'application/json'
       }
@@ -258,24 +270,27 @@ ${fullSnippetPayload}
 
       const errText = aiErr.message || '';
       if (errText.includes('API key not valid') || errText.includes('reported as leaked') || errText.includes('PERMISSION_DENIED')) {
-        return res.status(403).json({ 
-          success: false, 
-          error: 'Gemini AI access denied. Your API key may be invalid or deactivated (leaked). Please update your .env file with a fresh key.' 
+        return res.status(403).json({
+          success: false,
+          error: 'Gemini AI access denied. Your API key may be invalid or deactivated (leaked). Please update your .env file with a fresh key.'
         });
       }
 
-      console.log(`[AI Extraction] Attempting fallback to gemini-pro...`);
+      console.log(`[AI Extraction] Attempting dynamic fallback via REST ListModels...`);
       try {
-        const fallbackModel = genAI.getGenerativeModel({ model: "gemini-pro" });
+        const fallbackModelName = await findCompatibleModel();
+        if (!fallbackModelName) throw new Error('No compatible generative model found');
+        console.log(`[AI Extraction] Falling back to model: ${fallbackModelName}`);
+        const fallbackModel = genAI.getGenerativeModel({ model: fallbackModelName });
         aiResponse = await fallbackModel.generateContent(extractionPrompt);
       } catch (fallbackErr) {
         console.error(`[AI Extraction] Fallback failed:`, fallbackErr);
         const fallbackLeads = linkedinResults.map(r => ({ title: r.title, link: r.link, snippet: r.snippet }));
-        return res.json({ 
-          success: true, 
-          count: fallbackLeads.length, 
-          leads: fallbackLeads, 
-          warning: `AI extraction failed (${fallbackErr.message || 'Error'}). Returning raw results.` 
+        return res.json({
+          success: true,
+          count: fallbackLeads.length,
+          leads: fallbackLeads,
+          warning: `AI extraction failed (${fallbackErr.message || 'Error'}). Returning raw results.`
         });
       }
     }

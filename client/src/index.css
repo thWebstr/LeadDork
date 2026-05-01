@@ -35,6 +35,13 @@
   padding: 0;
 }
 
+/* Ensure app can use full viewport heights reliably */
+html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
   font-family: var(--font-sans);
   background-color: var(--bg-app);
